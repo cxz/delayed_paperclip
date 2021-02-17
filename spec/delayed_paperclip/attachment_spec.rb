@@ -1,9 +1,7 @@
 require 'spec_helper'
 
 describe DelayedPaperclip::Attachment do
-
   before :each do
-    DelayedPaperclip.options[:background_job_class] = DelayedPaperclip::Jobs::Resque
     reset_dummy(dummy_options)
   end
 
@@ -11,43 +9,51 @@ describe DelayedPaperclip::Attachment do
   let(:dummy) { Dummy.create }
 
   describe "#delayed_options" do
-
     it "returns the specific options for delayed paperclip" do
-      dummy.image.delayed_options.should == {
+      expect(dummy.image.delayed_options).to eq({
         :priority => 0,
         :only_process => [],
         :url_with_processing => true,
         :processing_image_url => nil,
-        :queue => nil
-      }
+        :queue => "paperclip"
+      })
     end
   end
 
   describe "#post_processing_with_delay" do
     it "is true if delay_processing? is false" do
       dummy.image.stubs(:delay_processing?).returns false
-      dummy.image.post_processing_with_delay.should be_true
+      dummy.image.post_processing.should be_truthy
     end
 
     it "is false if delay_processing? is true" do
       dummy.image.stubs(:delay_processing?).returns true
-      dummy.image.post_processing_with_delay.should be_false
+      dummy.image.post_processing.should be_falsey
+    end
+
+    context "on a non-delayed image" do
+      let(:dummy_options) { { with_processed: false } }
+
+      it "is false if delay_processing? is true" do
+        dummy.image.stubs(:delay_processing?).returns true
+        dummy.image.post_processing.should be_falsey
+      end
     end
   end
 
-  describe "delay_processing?" do
-    it "returns delayed_options existence if post_processing_with_delay is nil" do
-      dummy.image.post_processing_with_delay = nil
-      dummy.image.delay_processing?.should be_true
+  describe "#delay_processing?" do
+    it "returns delayed_options existence if post_processing is nil" do
+      dummy.image.post_processing = nil
+      dummy.image.delay_processing?.should be_truthy
     end
 
-    it "returns inverse of post_processing_with_delay if it's set" do
-      dummy.image.post_processing_with_delay = true
-      dummy.image.delay_processing?.should be_false
+    it "returns inverse of post_processing if it's set" do
+      dummy.image.post_processing = true
+      dummy.image.delay_processing?.should be_falsey
     end
   end
 
-  describe "processing?" do
+  describe "#processing?" do
     it "delegates to the dummy instance" do
       dummy.expects(:image_processing?)
       dummy.image.processing?
@@ -57,57 +63,102 @@ describe DelayedPaperclip::Attachment do
       let(:dummy_options) { { with_processed: false } }
 
       it "returns false" do
-        expect(dummy.image.processing?).to be_false
+        expect(dummy.image.processing?).to be_falsey
       end
     end
   end
 
-  describe "processing_stye?" do
+  describe "#processing_style?" do
     let(:style) { :background }
     let(:processing_style?) { dummy.image.processing_style?(style) }
 
     context "without a processing column" do
       let(:dummy_options) { { with_processed: true, process_column: false } }
 
-      specify { expect(processing_style?).to be_false }
+      specify { expect(processing_style?).to be_falsey }
     end
 
     context "with a processing column" do
       context "when not processing" do
         before { dummy.image_processing = false }
 
-        specify { expect(processing_style?).to be_false }
+        specify { expect(processing_style?).to be_falsey }
       end
 
       context "when processing" do
         before { dummy.image_processing = true }
 
         context "when not split processing" do
-          specify { expect(processing_style?).to be_true }
+          specify { expect(processing_style?).to be_truthy }
         end
 
         context "when split processing" do
-          let(:dummy_options) { {
-            paperclip: {
-              styles: {
-                online: "400x400x",
-                background: "600x600x"
+          context "when delayed :only_process is an Array" do
+            let(:dummy_options) { {
+              paperclip: {
+                styles: {
+                  online: "400x400x",
+                  background: "600x600x"
+                },
+                only_process: [:online]
               },
-              only_process: [:online]
-            },
 
-            delayed_paperclip: {
               only_process: [:background]
-            }
-          }}
+            }}
 
-          specify { expect(processing_style?).to be }
+            specify { expect(processing_style?).to be }
+          end
+
+          context "when delayed :only_process is callable" do
+            let(:dummy_options) { {
+              paperclip: {
+                styles: {
+                  online: "400x400x",
+                  background: "600x600x"
+                },
+                only_process: [:online]
+              },
+
+              only_process: lambda { |a| [:background] }
+            }}
+
+            specify { expect(processing_style?).to be }
+          end
         end
       end
     end
   end
 
-  describe "process_delayed!" do
+  describe "#delayed_only_process" do
+    context "without only_process options" do
+      it "returns []" do
+        expect(dummy.image.delayed_only_process).to eq []
+      end
+    end
+
+    context "with only_process options" do
+      before :each do
+        reset_dummy(paperclip: { only_process: [:small, :large] } )
+      end
+
+      it "returns [:small, :large]" do
+        expect(dummy.image.delayed_only_process).to eq [:small, :large]
+      end
+    end
+
+    context "with only_process set with callable" do
+      before :each do
+        reset_dummy(paperclip: { only_process: lambda { |a| [:small, :large] } } )
+      end
+
+      # Enable when https://github.com/thoughtbot/paperclip/pull/2289 is resolved
+      xit "returns [:small, :large]" do
+        expect(dummy.image.delayed_only_process).to eq [:small, :large]
+      end
+    end
+  end
+
+  describe "#process_delayed!" do
     it "sets job_is_processing to true" do
       dummy.image.expects(:job_is_processing=).with(true).once
       dummy.image.expects(:job_is_processing=).with(false).once
@@ -132,6 +183,18 @@ describe DelayedPaperclip::Attachment do
       end
 
       it "calls reprocess! with options" do
+        dummy.image.expects(:reprocess!).with(:small, :large)
+        dummy.image.process_delayed!
+      end
+    end
+
+    context "with only_process set with callable" do
+      before :each do
+        reset_dummy(paperclip: { only_process: lambda { |a| [:small, :large] } } )
+      end
+
+      # Enable when https://github.com/thoughtbot/paperclip/pull/2289 is resolved
+      xit "calls reprocess! with options" do
         dummy.image.expects(:reprocess!).with(:small, :large)
         dummy.image.process_delayed!
       end
@@ -166,24 +229,34 @@ describe DelayedPaperclip::Attachment do
     end
   end
 
-  describe "#after_flush_writes_with_processing" do
+  describe "#update_processing_column" do
     it "updates the column to false" do
       dummy.update_attribute(:image_processing, true)
 
-      dummy.image.after_flush_writes_with_processing
+      dummy.image.send(:update_processing_column)
 
-      dummy.image_processing.should be_false
+      dummy.reload.image_processing.should be_falsey
     end
 
-    it "still flushes temp files" do
-      dummy.image = File.open("#{ROOT}/spec/fixtures/12k.png")
-      paths = dummy.image.queued_for_write.values.map(&:path)
-      dummy.image.after_flush_writes_with_processing
-      paths.none?{ |path| File.exists?(path) }.should be_true
+    context 'with a  default scope on the model excluding the instance' do
+      let(:dummy_options) do
+        { :default_scope => lambda { Dummy.where(hidden: false) } }
+      end
+
+      let!(:dummy) { Dummy.create(hidden: true) }
+
+      specify { Dummy.count.should be 0 }
+      specify { Dummy.unscoped.count.should be 1 }
+
+      it "ignores the default scope and updates the column to false" do
+        dummy.update_attribute(:image_processing, true)
+        dummy.image.send(:update_processing_column)
+        dummy.reload.image_processing.should be_falsey
+      end
     end
   end
 
-  describe "#save_with_prepare_enqueueing" do
+  describe "#save" do
     context "delay processing and it was dirty" do
       before :each do
         dummy.image.stubs(:delay_processing?).returns true
@@ -192,14 +265,14 @@ describe DelayedPaperclip::Attachment do
 
       it "prepares the enqueing" do
         dummy.expects(:prepare_enqueueing_for).with(:image)
-        dummy.image.save_with_prepare_enqueueing
+        dummy.image.save
       end
     end
 
     context "without dirty or delay_processing" do
       it "does not prepare_enqueueing" do
         dummy.expects(:prepare_enqueueing_for).with(:image).never
-        dummy.image.save_with_prepare_enqueueing
+        dummy.image.save
       end
     end
   end
@@ -209,6 +282,64 @@ describe DelayedPaperclip::Attachment do
       dummy.image.expects(:reprocess!).with(:small)
       dummy.image.reprocess_without_delay!(:small)
       dummy.image.instance_variable_get(:@post_processing_with_delay).should == true
+    end
+  end
+
+  describe "#split_processing?" do
+    let(:split_processing?) { dummy.image.split_processing? }
+
+    let(:paperclip_styles) { {
+      online: "400x400x",
+      background: "600x600x"
+    } }
+
+    context ":only_process option is set on attachment" do
+      let(:dummy_options) { {
+        paperclip: {
+          styles: paperclip_styles,
+          only_process: [:online]
+        },
+
+        only_process: delayed_only_process
+      }}
+
+      context "processing different styles in background" do
+        context "when delayed :only_process is an Array" do
+          let(:delayed_only_process) { [:background] }
+
+          specify { expect(split_processing?).to be true }
+        end
+
+        context "when delayed :only_process is callable" do
+          let(:delayed_only_process) { lambda { |a| [:background] } }
+
+          specify { expect(split_processing?).to be true }
+        end
+      end
+
+      context "processing same styles in background" do
+        context "when delayed :only_process is an Array" do
+          let(:delayed_only_process) { [:online] }
+
+          specify { expect(split_processing?).to be false }
+        end
+
+        context "when delayed :only_process is callable" do
+          let(:delayed_only_process) { lambda { |a| [:online] } }
+
+          specify { expect(split_processing?).to be false }
+        end
+      end
+    end
+
+    context ":only_process option is not set on attachment" do
+      let(:dummy_options) { {
+        paperclip: {
+          styles: paperclip_styles
+        }
+      }}
+
+      specify { expect(split_processing?).to be false }
     end
   end
 end

@@ -1,11 +1,12 @@
-appraise "rails3_1" do
-  gem "rails", "~> 3.1.12"
+appraise "4.2" do
+  gem "rails", "~> 4.2.0"
 end
 
-appraise "rails3_2" do
-  gem "rails", "~> 3.2.17"
+appraise "5.0" do
+  gem "rails", "~> 5.0.0"
 end
 
-appraise "rails4" do
-  gem "rails", "~> 4.0.3"
+appraise "5.0-paperclip-master" do
+  gem "rails", "~> 5.0.0"
+  gem "paperclip", github: "thoughtbot/paperclip"
 end

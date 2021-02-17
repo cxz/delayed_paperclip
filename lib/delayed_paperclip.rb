@@ -1,24 +1,17 @@
-require 'delayed_paperclip/jobs'
+require 'delayed_paperclip/process_job'
 require 'delayed_paperclip/attachment'
 require 'delayed_paperclip/url_generator'
-require 'delayed_paperclip/railtie'
+require 'delayed_paperclip/railtie' if defined?(Rails)
 
 module DelayedPaperclip
-
   class << self
-
     def options
       @options ||= {
-        :background_job_class => detect_background_task,
+        :background_job_class => DelayedPaperclip::ProcessJob,
         :url_with_processing  => true,
-        :processing_image_url => nil
+        :processing_image_url => nil,
+        :queue => "paperclip"
       }
-    end
-
-    def detect_background_task
-      return DelayedPaperclip::Jobs::DelayedJob if defined? ::Delayed::Job
-      return DelayedPaperclip::Jobs::Resque     if defined? ::Resque
-      return DelayedPaperclip::Jobs::Sidekiq    if defined? ::Sidekiq
     end
 
     def processor
@@ -30,7 +23,10 @@ module DelayedPaperclip
     end
 
     def process_job(instance_klass, instance_id, attachment_name)
-      instance_klass.constantize.unscoped.find(instance_id).
+      instance = instance_klass.constantize.unscoped.where(id: instance_id).first
+      return if instance.blank?
+
+      instance.
         send(attachment_name).
         process_delayed!
     end
@@ -57,12 +53,10 @@ module DelayedPaperclip
         :priority => 0,
         :only_process => only_process_default,
         :url_with_processing => DelayedPaperclip.options[:url_with_processing],
-        :processing_image_url => options[:processing_image_url],
-        :queue => nil
+        :processing_image_url => DelayedPaperclip.options[:processing_image_url],
+        :queue => DelayedPaperclip.options[:queue]
       }.each do |option, default|
-
         paperclip_definitions[name][:delayed][option] = options.key?(option) ? options[option] : default
-
       end
 
       # Sets callback
@@ -74,7 +68,7 @@ module DelayedPaperclip
     end
 
     def paperclip_definitions
-      @paperclip_definitions ||= if respond_to? :attachment_definitions
+      if respond_to? :attachment_definitions
         attachment_definitions
       else
         Paperclip::Tasks::Attachments.definitions_for(self)
@@ -102,7 +96,7 @@ module DelayedPaperclip
       unless @_enqued_for_processing_with_processing.blank? # catches nil and empty arrays
         updates = @_enqued_for_processing_with_processing.collect{|n| "#{n}_processing = :true" }.join(", ")
         updates = ActiveRecord::Base.send(:sanitize_sql_array, [updates, {:true => true}])
-        self.class.where(:id => self.id).update_all(updates)
+        self.class.unscoped.where(:id => self.id).update_all(updates)
       end
     end
 
@@ -120,6 +114,5 @@ module DelayedPaperclip
       @_enqued_for_processing ||= []
       @_enqued_for_processing << name
     end
-
   end
 end
