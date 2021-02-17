@@ -47,7 +47,7 @@ module DelayedPaperclip
       return false if @attachment.job_is_processing
       return false if @attachment.dirty?
       return false if not @attachment.delayed_options.try(:[], :url_with_processing)
-      return false if not @attachment.processing_style?(style)
+      return false if not processing?(style)
       true
     end
 
