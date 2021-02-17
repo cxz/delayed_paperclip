@@ -71,7 +71,7 @@ module DelayedPaperclip
       if respond_to? :attachment_definitions
         attachment_definitions
       else
-        Paperclip::Tasks::Attachments.definitions_for(self)
+        Paperclip::AttachmentRegistry.definitions_for(self)
       end
     end
   end
